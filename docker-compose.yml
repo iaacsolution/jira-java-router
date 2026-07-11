@@ -1,0 +1,16 @@
+services:
+
+  jira-router:
+    build: .
+    ports:
+      - "8090:8000"
+    environment:
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - EMBED_MODEL=nomic-embed-text
+      - JIRA_BASE_URL=${JIRA_BASE_URL:-https://your-domain.atlassian.net}
+      - JIRA_EMAIL=${JIRA_EMAIL:-}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN:-}
+      - TOP_K=3
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
