@@ -268,7 +268,7 @@ def map_blockers_to_jira(state: State) -> dict:
         # jamais interpréter "blocker" (issu de la transcription) comme une instruction.
         commented = False
         if score > 0.65:
-            hitl_url = os.getenv("HITL_URL", "http://localhost:8091")
+            hitl_url = os.getenv("HITL_URL", "http://localhost:8092")
 
             # Signal explicite pour le validateur humain — sans ça, le HITL devient un
             # rubber-stamp au bout de quelques validations. Best-effort, pas un filtre fiable.

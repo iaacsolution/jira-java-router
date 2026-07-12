@@ -14,7 +14,7 @@ Installation :
 Lancement :
     python hitl_daily.py
     # Dans un autre terminal :
-    cloudflared tunnel --url http://localhost:8091
+    cloudflared tunnel --url http://localhost:8092
     # Configurer l'URL Slack : Interactivity → Request URL = https://xxx/slack/actions
 """
 
@@ -138,6 +138,13 @@ def _send_approval_buttons(state: State, thread_id: str) -> None:
             }
         ]
     }
+
+    # Log du corps EXACT juste avant l'appel HTTP (jamais les headers/tokens) — vérifie ce qui
+    # part réellement plutôt que de faire confiance à l'intention du code. Toujours actif
+    # (même en simulation console) : c'est le même dict qui serait posté si un canal était
+    # configuré.
+    print(f"[HITL] Payload Slack construit (thread={thread_id[:8]}...) :")
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
 
     # Utilise l'API Bot (canal privé explicite) ou le webhook HITL dédié — jamais
     # SLACK_WEBHOOK_URL (canal général, potentiellement lu par l'auteur du ticket/audio).
