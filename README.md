@@ -114,10 +114,23 @@ pas configuré.
 de canal ne protège pas contre un insider, la défense structurelle est de réduire ce que
 l'agent peut atteindre : `app/java_classes.py::_is_indexable` filtre le corpus avant
 indexation — whitelist de préfixes de packages métier (`com.legacy.*`, jamais l'infra),
-blacklist par nom (`config`, `credential`, `secret`, `password`, `token`, `datasource`...) et
-par motif (chaînes ressemblant à une clé/URL de connexion). Une classe qui ne passe pas le
-filtre n'entre jamais dans l'index et ne peut donc jamais remonter dans Slack ou Jira, quel
-que soit le prompt ou l'attaquant — l'agent ne peut pas révéler ce qu'il n'a jamais vu.
+blacklist **par nom de classe** (`config`, `credential`, `secret`, `password`, `token`,
+`datasource`...) et par motif dans le texte libre (chaînes ressemblant à une clé/URL de
+connexion, ou motif `mot-clé=valeur` façon secret copié-collé). Une classe qui ne passe pas
+le filtre n'entre jamais dans l'index et ne peut donc jamais remonter dans Slack ou Jira,
+quel que soit le prompt ou l'attaquant — l'agent ne peut pas révéler ce qu'il n'a jamais vu.
+
+Testé (`tests/test_java_classes_filter.py`, 13 cas, `python -m unittest tests.test_java_classes_filter`) —
+pas seulement relu. Le premier jet appliquait la blacklist par mot-clé au texte libre
+(description/dépendances) en plus du nom de classe : rejoué contre le vrai golden dataset,
+ça rejetait à tort **5 classes sur 8** (`AuthenticationFilter` décrit légitimement un
+"token de session" en prose, plusieurs services dépendent de `javax.sql.DataSource` — une
+classe JDK standard, pas un secret). Corrigé : la blacklist par mot-clé ne s'applique qu'au
+nom de la classe (signal fort — `XxxConfig`/`XxxTokenService` sont vraiment souvent des
+classes de config/sécurité) ; le texte libre n'est filtré que sur des motifs à forme de
+secret réel (URL de connexion, clé AWS/API, motif `clé=valeur`). Limite assumée : un mot de
+passe en clair écrit en prose sans ce format (`"le mot de passe est 1234"`) n'est pas
+détecté — seul le motif `mot-clé[:=]valeur` l'est.
 
 **4. Signal explicite pour le validateur humain.** `prompt_injection_scanner.py` (mêmes
 patterns que `PromptInjectionScanner.java` côté java-legacy-agent) scanne la transcription

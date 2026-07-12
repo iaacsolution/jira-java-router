@@ -2,9 +2,9 @@
 Golden dataset des classes Java indexées.
 Chaque classe est un Document LlamaIndex avec métadonnées structurées.
 """
-import re
+from __future__ import annotations
 
-from llama_index.core import Document
+import re
 
 # ── Garde-fou least-privilege sur l'index ────────────────────────────────────────
 # Le canal Slack de validation (hitl_daily.py) protège contre un attaquant EXTERNE
@@ -21,19 +21,34 @@ from llama_index.core import Document
 ALLOWED_PACKAGE_PREFIXES = ("com.legacy.",)
 
 # Défense en profondeur, complémentaire à la whitelist ci-dessus — exclut par nom même
-# dans un package autorisé (au cas où une classe de config finit mal rangée).
+# dans un package autorisé (au cas où une classe de config finit mal rangée). Appliqué
+# UNIQUEMENT au nom de la classe (identifiant), jamais au texte libre : testé sur le vrai
+# dataset, appliquer ce même motif à la description/dépendances rejetait à tort 5 classes
+# sur 8 (ex. AuthenticationFilter décrit légitimement un "token" de session en prose,
+# ClientServiceBean dépend de javax.sql.DataSource — un nom de classe JDK standard, pas un
+# secret). Un nom de classe qui contient ces mots est un signal fort (XxxConfig, XxxToken
+# Service sont typiquement bien des classes de config/sécurité) ; le même mot en prose ne
+# l'est pas.
 _SENSITIVE_NAME_PATTERN = re.compile(
     r"config|properties|credential|secret|password|token|apikey|datasource",
     re.IGNORECASE,
 )
 
-# Détecte des chaînes qui ressemblent à une clé/URL de connexion/token dans le texte
-# libre (description, dépendances) — une classe par ailleurs légitime peut mentionner
+# Détecte des chaînes qui ressemblent à une clé/URL de connexion dans le texte libre
+# (description, dépendances) — une classe par ailleurs légitime peut mentionner
 # accidentellement une valeur sensible copiée-collée dans un commentaire.
 _SECRET_LIKE_PATTERN = re.compile(
     r"(jdbc:|mongodb://|postgres://|mysql://"
     r"|\bAKIA[0-9A-Z]{16}\b|sk-[A-Za-z0-9]{20,}"
     r"|[A-Za-z0-9+/]{32,}={0,2}\b)"
+)
+
+# Détecte un motif "mot-clé sensible suivi d'une valeur" (password: hunter2, token=eyJ...)
+# dans le texte libre — plus précis qu'un simple mot-clé isolé, qui matcherait aussi de la
+# prose légitime ("vérifie le password de l'utilisateur").
+_SECRET_ASSIGNMENT_PATTERN = re.compile(
+    r"(?:password|secret|token|api[_-]?key|credential)\s*[:=]\s*\S{4,}",
+    re.IGNORECASE,
 )
 
 
@@ -49,7 +64,7 @@ def _is_indexable(cls: dict) -> bool:
         " ".join(cls.get("responsibilities", [])),
         " ".join(cls.get("dependencies", [])),
     ])
-    if _SENSITIVE_NAME_PATTERN.search(haystack) or _SECRET_LIKE_PATTERN.search(haystack):
+    if _SECRET_LIKE_PATTERN.search(haystack) or _SECRET_ASSIGNMENT_PATTERN.search(haystack):
         return False
     return True
 
@@ -179,6 +194,8 @@ def build_documents() -> list[Document]:
     exclue de l'index et donc de tout ce que l'agent peut jamais faire remonter dans
     Slack ou Jira, quel que soit le prompt ou l'attaquant.
     """
+    from llama_index.core import Document  # import local : _is_indexable() reste testable sans llama-index
+
     docs = []
     for cls in JAVA_CLASSES:
         if not _is_indexable(cls):
