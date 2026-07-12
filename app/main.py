@@ -23,6 +23,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request, BackgroundTasks
 from pydantic import BaseModel
 
+import prompt_injection_scanner as injection_scanner
 from app.indexer import JavaClassIndex
 from app.jira_client import JiraClient
 
@@ -145,14 +146,15 @@ def _trigger_hitl(ticket_key: str, summary_text: str, comment_body: dict) -> Non
         log.error("Service HITL injoignable (%s) — commentaire NON posté pour %s", e, ticket_key)
 
 
-def _trigger_comment_task(issue_key: str, classes: list[dict]) -> None:
+def _trigger_comment_task(issue_key: str, classes: list[dict], suspicious: bool = False) -> None:
     """Tâche background — construit le commentaire et le soumet à validation humaine."""
     client = _build_jira_client()
     if not client:
         return
     body = client.format_comment(issue_key, classes)
     names = ", ".join(c["name"] for c in classes) if classes else "aucune classe trouvée"
-    _trigger_hitl(issue_key, f"Classes Java proposées pour {issue_key} : {names}", body)
+    alert = "⚠️ *Formulation suspecte détectée dans le ticket*\n" if suspicious else ""
+    _trigger_hitl(issue_key, f"{alert}Classes Java proposées pour {issue_key} : {names}", body)
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -278,13 +280,19 @@ async def jira_webhook(request: Request, background_tasks: BackgroundTasks):
         log.warning("Ticket %s sans contenu — ignoré", issue_key)
         return {"status": "ignored", "reason": "empty_content"}
 
+    # Signal explicite pour le validateur humain si le ticket contient une formulation
+    # qui ressemble a une instruction — best-effort, pas un filtre fiable a 100%.
+    scan_result = injection_scanner.scan(query)
+    if scan_result.suspicious:
+        log.warning("Ticket %s — pattern(s) suspect(s) détecté(s) : %s", issue_key, scan_result.matched_patterns)
+
     log.info("Ticket %s reçu — recherche top-%d classes...", issue_key, TOP_K)
     classes = _index.find_relevant_classes(query, top_k=TOP_K)
 
     log.info("Résultats pour %s : %s", issue_key, [c["name"] for c in classes])
 
     # Soumission a validation humaine en arrière-plan — jamais de post direct sur Jira
-    background_tasks.add_task(_trigger_comment_task, issue_key, classes)
+    background_tasks.add_task(_trigger_comment_task, issue_key, classes, scan_result.suspicious)
 
     return {
         "status":    "accepted",

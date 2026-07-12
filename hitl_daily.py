@@ -40,11 +40,23 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 
 load_dotenv()
 
-SLACK_WEBHOOK  = os.getenv("SLACK_WEBHOOK_URL",  "")
-SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN",   "")  # pour mise à jour du message
-SLACK_CHANNEL  = os.getenv("SLACK_CHANNEL",       "#general")
-JIRA_URL       = os.getenv("JIRA_BASE_URL",       "")
-JIRA_AUTH      = (os.getenv("JIRA_EMAIL", ""), os.getenv("JIRA_API_TOKEN", ""))
+# Canal de validation — DOIT être distinct de SLACK_WEBHOOK_URL (utilisé par
+# reunion_to_slack.py pour le rapport final). Ce message affiche le contenu AVANT
+# validation humaine : s'il part sur un canal que l'auteur du ticket/de l'audio peut
+# lire, l'exfiltration n'est pas bloquée par le HITL, juste déplacée d'un cran — la
+# donnée sensible fuit au moment de l'affichage, pas au moment du clic. Ne JAMAIS
+# retomber sur SLACK_WEBHOOK_URL ici, même en fallback.
+SLACK_HITL_WEBHOOK = os.getenv("SLACK_HITL_WEBHOOK_URL", "")
+SLACK_BOT_TOKEN    = os.getenv("SLACK_BOT_TOKEN",        "")  # pour mise à jour du message
+SLACK_CHANNEL      = os.getenv("SLACK_CHANNEL",          "")  # requis avec SLACK_BOT_TOKEN, canal privé
+JIRA_URL           = os.getenv("JIRA_BASE_URL",          "")
+JIRA_AUTH          = (os.getenv("JIRA_EMAIL", ""), os.getenv("JIRA_API_TOKEN", ""))
+
+if not SLACK_HITL_WEBHOOK and not (SLACK_BOT_TOKEN and SLACK_CHANNEL):
+    print("⚠️  Aucun canal Slack privé configuré pour la validation HITL "
+          "(SLACK_HITL_WEBHOOK_URL, ou SLACK_BOT_TOKEN+SLACK_CHANNEL) — mode simulation "
+          "console uniquement. Ne configurez PAS SLACK_WEBHOOK_URL ici : ce canal est "
+          "potentiellement lisible par l'auteur du ticket/de l'audio.")
 
 
 # ── STATE ─────────────────────────────────────────────────────────────────────
@@ -109,18 +121,20 @@ def _send_approval_buttons(state: State, thread_id: str) -> None:
         ]
     }
 
-    # Utilise le webhook ou l'API Bot selon ce qui est configuré
-    if SLACK_BOT_TOKEN:
+    # Utilise l'API Bot (canal privé explicite) ou le webhook HITL dédié — jamais
+    # SLACK_WEBHOOK_URL (canal général, potentiellement lu par l'auteur du ticket/audio).
+    if SLACK_BOT_TOKEN and SLACK_CHANNEL:
         requests.post(
             "https://slack.com/api/chat.postMessage",
             json=payload,
             headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"},
             timeout=10,
         )
-    elif SLACK_WEBHOOK:
-        requests.post(SLACK_WEBHOOK, json={"blocks": payload["blocks"]}, timeout=10)
+    elif SLACK_HITL_WEBHOOK:
+        requests.post(SLACK_HITL_WEBHOOK, json={"blocks": payload["blocks"]}, timeout=10)
     else:
-        print(f"[Slack simulation] thread_id={thread_id}\n  À valider : {state['summary_text']}")
+        print(f"[Slack simulation — AUCUN CANAL PRIVÉ CONFIGURÉ] thread_id={thread_id}\n"
+              f"  À valider : {state['summary_text']}")
 
 
 def _post_jira_comment(ticket_key: str, body: dict) -> bool:

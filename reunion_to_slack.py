@@ -31,6 +31,8 @@ from dotenv import load_dotenv
 from faster_whisper import WhisperModel
 from langgraph.graph import StateGraph, END
 
+import prompt_injection_scanner as injection_scanner
+
 # Force UTF-8 sur stdout — la console Windows par defaut (cp1252) plante sur les
 # emojis utilises dans les print() ci-dessous, independamment du terminal utilise
 # le jour de la demo.
@@ -267,6 +269,12 @@ def map_blockers_to_jira(state: State) -> dict:
         commented = False
         if score > 0.65:
             hitl_url = os.getenv("HITL_URL", "http://localhost:8091")
+
+            # Signal explicite pour le validateur humain — sans ça, le HITL devient un
+            # rubber-stamp au bout de quelques validations. Best-effort, pas un filtre fiable.
+            scan_result = injection_scanner.scan(blocker)
+            alert_prefix = "⚠️ *Formulation suspecte détectée dans la transcription*\n" if scan_result.suspicious else ""
+
             comment_body = {
                 "version": 1, "type": "doc",
                 "content": [
@@ -286,7 +294,7 @@ def map_blockers_to_jira(state: State) -> dict:
                     f"{hitl_url}/hitl/trigger",
                     json={
                         "ticket_key":    best["key"],
-                        "summary_text":  f"Bloqueur : {blocker}\nTicket : {best['summary']}",
+                        "summary_text":  f"{alert_prefix}Bloqueur : {blocker}\nTicket : {best['summary']}",
                         "comment_body":  comment_body,
                     },
                     timeout=10,

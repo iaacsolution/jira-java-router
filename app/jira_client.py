@@ -1,12 +1,8 @@
 """
-Client Jira REST API v3 — poste un commentaire sur un ticket.
-Supporte Jira Cloud (token API) et Jira Server (basic auth).
+Client Jira REST API v3 — formate un commentaire (le post reste toujours soumis à
+validation humaine, voir hitl_daily.py::_post_jira_comment — c'est le SEUL endroit du
+projet autorisé à écrire sur Jira, et uniquement après confirmation Slack).
 """
-import logging
-import httpx
-
-log = logging.getLogger(__name__)
-
 
 class JiraClient:
 
@@ -14,28 +10,11 @@ class JiraClient:
         self.base_url = base_url.rstrip("/")
         self._auth    = (email, api_token)
 
-    def post_comment(self, issue_key: str, classes: list[dict]) -> bool:
-        """Poste les 3 classes Java recommandées en commentaire Jira."""
-        body = self.format_comment(issue_key, classes)
-        url  = f"{self.base_url}/rest/api/3/issue/{issue_key}/comment"
-
-        try:
-            resp = httpx.post(
-                url,
-                json={"body": body},
-                auth=self._auth,
-                headers={"Content-Type": "application/json"},
-                timeout=10,
-            )
-            resp.raise_for_status()
-            log.info("Commentaire posté sur %s", issue_key)
-            return True
-        except httpx.HTTPStatusError as e:
-            log.error("Erreur Jira %s pour %s : %s", e.response.status_code, issue_key, e.response.text)
-            return False
-        except httpx.RequestError as e:
-            log.error("Jira injoignable : %s", e)
-            return False
+    # Pas de méthode post_comment() ici, volontairement : ce client ne doit servir qu'à
+    # construire le corps ADF (format_comment), jamais à poster directement — sinon on
+    # recrée le contournement du HITL que ce refactor vient d'éliminer. Le seul poseur
+    # de commentaire autorisé est hitl_daily.py::_post_jira_comment, appelé uniquement
+    # après human_decision == "confirm".
 
     def format_comment(self, issue_key: str, classes: list[dict]) -> dict:
         """Formate le commentaire en Atlassian Document Format (ADF)."""

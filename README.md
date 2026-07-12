@@ -80,14 +80,32 @@ python reunion_to_slack.py
 # au lieu du micro live avec --wav fichier.wav
 ```
 
-## Sécurité — limite connue, assumée
+## Sécurité — garanties, et limites assumées
 
-**Garantie en place** : aucun commentaire n'est jamais posté automatiquement sur un ticket
-Jira, ni depuis `reunion_to_slack.py` (bloqueur détecté en Daily) ni depuis `app/main.py`
-(webhook `issue_created`, endpoint `/impact`) — tous passent par la même validation humaine
-Slack (`hitl_daily.py`, `interrupt`/`Command.resume` LangGraph). Le contenu d'un ticket Jira
-est traité comme une donnée à router, jamais comme une instruction ; même chose pour la
-transcription audio, explicitement balisée DÉBUT/FIN DONNÉE dans le prompt d'analyse.
+**1. Jamais de post Jira automatique.** Ni `reunion_to_slack.py` (bloqueur détecté en Daily)
+ni `app/main.py` (webhook `issue_created`, endpoint `/impact`) ne postent directement — tous
+passent par la même validation humaine Slack (`hitl_daily.py`, `interrupt`/`Command.resume`
+LangGraph). `JiraClient` n'expose même plus de méthode de post direct, volontairement : le
+seul endroit du projet autorisé à écrire sur Jira est `hitl_daily.py::_post_jira_comment`,
+atteint uniquement après un clic humain confirmé.
+
+**2. Le canal de validation est distinct du canal général.** Piège identifié en pratique :
+un HITL qui affiche le contenu à valider sur un canal que l'auteur du ticket (ou un
+participant du Daily) peut lire ne bloque pas l'exfiltration, il la déplace juste d'un cran
+— la donnée fuit à l'affichage, avant même le clic. `hitl_daily.py` exige donc un canal
+Slack **dédié et privé** (`SLACK_HITL_WEBHOOK_URL`, distinct de `SLACK_WEBHOOK_URL` utilisé
+pour le rapport final) — sans cette variable, il retombe en simulation console plutôt que de
+silencieusement poster sur le canal général.
+
+**3. Signal explicite pour le validateur humain.** `prompt_injection_scanner.py` (mêmes
+patterns que `PromptInjectionScanner.java` côté java-legacy-agent) scanne la transcription
+et le texte du ticket Jira ; un `⚠️ Formulation suspecte détectée` apparaît dans le message
+Slack si un pattern d'injection est trouvé. Best-effort, pas un filtre fiable à 100% — le
+vrai garde-fou reste le point 1 (aucun post sans validation).
+
+**4. Séparation instruction/données.** Le contenu d'un ticket Jira et la transcription audio
+sont traités comme des données à router, jamais comme des instructions — balisage explicite
+DÉBUT/FIN DONNÉE dans le prompt d'analyse Daily (`analyze_daily`).
 
 **Limite connue, assumée** : `/slack/actions` (dans `hitl_daily.py`) ne vérifie pas la
 signature Slack (`X-Slack-Signature`). Sur un tunnel public, quelqu'un connaissant l'URL et
