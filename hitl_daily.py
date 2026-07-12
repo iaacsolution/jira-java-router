@@ -50,9 +50,12 @@ JIRA_AUTH      = (os.getenv("JIRA_EMAIL", ""), os.getenv("JIRA_API_TOKEN", ""))
 # ── STATE ─────────────────────────────────────────────────────────────────────
 
 class State(TypedDict):
-    blocker:         str    # texte du bloqueur
     ticket_key:      str    # ex: KAN-15
-    ticket_summary:  str    # titre du ticket Jira
+    summary_text:    str    # texte court affiche dans le message Slack (jamais poste tel
+                             # quel sur Jira sans validation humaine — c'est le but du HITL)
+    comment_body:    dict   # corps ADF complet a poster sur Jira SI l'humain confirme —
+                             # construit par l'appelant (reunion_to_slack.py, app/main.py),
+                             # jamais genere ici a partir de texte non fiable
     human_decision:  str    # "confirm" | "cancel" — rempli après interrupt
     jira_commented:  bool
 
@@ -74,9 +77,12 @@ def _send_approval_buttons(state: State, thread_id: str) -> None:
             },
             {
                 "type": "section",
+                # summary_text peut provenir d'une transcription audio ou du texte d'un
+                # ticket Jira (donnee non fiable) — Slack l'affiche tel quel, ne l'execute
+                # jamais. Le point de decision reste le clic humain, pas ce texte.
                 "fields": [
-                    {"type": "mrkdwn", "text": f"*Bloqueur :*\n{state['blocker']}"},
-                    {"type": "mrkdwn", "text": f"*Ticket Jira :*\n`{state['ticket_key']}` — {state['ticket_summary']}"},
+                    {"type": "mrkdwn", "text": f"*À valider :*\n{state['summary_text']}"},
+                    {"type": "mrkdwn", "text": f"*Ticket Jira :*\n`{state['ticket_key']}`"},
                 ]
             },
             {"type": "divider"},
@@ -114,31 +120,20 @@ def _send_approval_buttons(state: State, thread_id: str) -> None:
     elif SLACK_WEBHOOK:
         requests.post(SLACK_WEBHOOK, json={"blocks": payload["blocks"]}, timeout=10)
     else:
-        print(f"[Slack simulation] thread_id={thread_id}\n  Bloqueur : {state['blocker']}")
+        print(f"[Slack simulation] thread_id={thread_id}\n  À valider : {state['summary_text']}")
 
 
-def _post_jira_comment(ticket_key: str, blocker: str) -> bool:
-    """Poste un commentaire ADF sur le ticket Jira."""
+def _post_jira_comment(ticket_key: str, body: dict) -> bool:
+    """
+    Poste un corps ADF deja construit sur le ticket Jira — appele UNIQUEMENT apres
+    validation humaine (post_jira_comment_node, atteint seulement si human_decision
+    == "confirm"). Ne construit rien a partir de texte non fiable : le corps est
+    fourni tel quel par l'appelant du workflow HITL.
+    """
     if not JIRA_URL:
-        print(f"[Jira simulation] Commentaire sur {ticket_key} : {blocker}")
+        print(f"[Jira simulation] Commentaire sur {ticket_key}")
         return True
 
-    body = {
-        "version": 1, "type": "doc",
-        "content": [
-            {"type": "paragraph", "content": [
-                {"type": "text", "text": "🚨 Bloqueur confirmé en Daily Scrum",
-                 "marks": [{"type": "strong"}]}
-            ]},
-            {"type": "paragraph", "content": [
-                {"type": "text", "text": blocker}
-            ]},
-            {"type": "paragraph", "content": [
-                {"type": "text", "text": "Validé manuellement via Slack — LangGraph HITL",
-                 "marks": [{"type": "em"}]}
-            ]}
-        ]
-    }
     resp = requests.post(
         f"{JIRA_URL}/rest/api/3/issue/{ticket_key}/comment",
         json={"body": body},
@@ -174,7 +169,7 @@ def human_approval_node(state: State) -> dict:
 def post_jira_comment_node(state: State) -> dict:
     """Nœud exécuté seulement si l'humain a confirmé."""
     print(f"[Jira] Post commentaire sur {state['ticket_key']}...")
-    success = _post_jira_comment(state["ticket_key"], state["blocker"])
+    success = _post_jira_comment(state["ticket_key"], state["comment_body"])
     print(f"[Jira] {'✅ Commenté' if success else '❌ Erreur'}")
     return {"jira_commented": success}
 
@@ -219,17 +214,29 @@ api = FastAPI(title="LangGraph HITL — Slack + Jira")
 @api.post("/hitl/trigger")
 async def trigger_approval(request: Request):
     """
-    Démarre un workflow HITL.
-    Body JSON : {"blocker": "...", "ticket_key": "KAN-15", "ticket_summary": "..."}
+    Démarre un workflow HITL générique — passage obligé avant tout commentaire Jira
+    automatique, quel que soit l'appelant (reunion_to_slack.py, app/main.py webhook,
+    endpoint /impact). Aucun contenu n'est posté sur Jira sans ce clic humain.
+
+    Body JSON : {"ticket_key": "KAN-15", "summary_text": "...", "comment_body": {<ADF>}}
+
+    summary_text et comment_body peuvent contenir du texte issu d'une source non fiable
+    (transcription audio, titre/description d'un ticket Jira cree par n'importe qui) —
+    ce endpoint les traite uniquement comme donnees a afficher/poster, jamais comme des
+    instructions a executer.
     """
     data       = await request.json()
     thread_id  = str(uuid.uuid4())   # identifiant unique du run LangGraph
+
+    if "ticket_key" not in data or "comment_body" not in data:
+        return JSONResponse(status_code=400, content={"error": "ticket_key et comment_body requis"})
+
     config     = {"configurable": {"thread_id": thread_id}}
 
     state: State = {
-        "blocker":        data["blocker"],
-        "ticket_key":     data["ticket_key"],
-        "ticket_summary": data.get("ticket_summary", ""),
+        "ticket_key":    data["ticket_key"],
+        "summary_text":  data.get("summary_text", ""),
+        "comment_body":  data["comment_body"],
         "human_decision": "",
         "jira_commented": False,
     }

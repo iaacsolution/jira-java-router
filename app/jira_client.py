@@ -16,7 +16,7 @@ class JiraClient:
 
     def post_comment(self, issue_key: str, classes: list[dict]) -> bool:
         """Poste les 3 classes Java recommandées en commentaire Jira."""
-        body = self._format_comment(issue_key, classes)
+        body = self.format_comment(issue_key, classes)
         url  = f"{self.base_url}/rest/api/3/issue/{issue_key}/comment"
 
         try:
@@ -37,7 +37,7 @@ class JiraClient:
             log.error("Jira injoignable : %s", e)
             return False
 
-    def _format_comment(self, issue_key: str, classes: list[dict]) -> dict:
+    def format_comment(self, issue_key: str, classes: list[dict]) -> dict:
         """Formate le commentaire en Atlassian Document Format (ADF)."""
         lines = []
         for i, cls in enumerate(classes, 1):
