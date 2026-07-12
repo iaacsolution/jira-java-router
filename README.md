@@ -82,9 +82,16 @@ python reunion_to_slack.py
 
 ## Sécurité — limite connue, assumée
 
-`/slack/actions` (dans `hitl_daily.py`) ne vérifie pas la signature Slack
-(`X-Slack-Signature`). Sur un tunnel public, quelqu'un connaissant l'URL et un
-`thread_id` valide (UUID généré à l'ouverture de chaque validation) pourrait forcer une
+**Garantie en place** : aucun commentaire n'est jamais posté automatiquement sur un ticket
+Jira, ni depuis `reunion_to_slack.py` (bloqueur détecté en Daily) ni depuis `app/main.py`
+(webhook `issue_created`, endpoint `/impact`) — tous passent par la même validation humaine
+Slack (`hitl_daily.py`, `interrupt`/`Command.resume` LangGraph). Le contenu d'un ticket Jira
+est traité comme une donnée à router, jamais comme une instruction ; même chose pour la
+transcription audio, explicitement balisée DÉBUT/FIN DONNÉE dans le prompt d'analyse.
+
+**Limite connue, assumée** : `/slack/actions` (dans `hitl_daily.py`) ne vérifie pas la
+signature Slack (`X-Slack-Signature`). Sur un tunnel public, quelqu'un connaissant l'URL et
+un `thread_id` valide (UUID généré à l'ouverture de chaque validation) pourrait forcer une
 décision sans être passé par Slack. Acceptable pour une démo sur tunnel éphémère et projet
 personnel ; à corriger avant tout usage en production (vérification HMAC du header Slack).
 
