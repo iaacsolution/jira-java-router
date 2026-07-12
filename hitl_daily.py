@@ -42,15 +42,33 @@ load_dotenv()
 
 # Canal de validation — DOIT être distinct de SLACK_WEBHOOK_URL (utilisé par
 # reunion_to_slack.py pour le rapport final). Ce message affiche le contenu AVANT
-# validation humaine : s'il part sur un canal que l'auteur du ticket/de l'audio peut
-# lire, l'exfiltration n'est pas bloquée par le HITL, juste déplacée d'un cran — la
-# donnée sensible fuit au moment de l'affichage, pas au moment du clic. Ne JAMAIS
-# retomber sur SLACK_WEBHOOK_URL ici, même en fallback.
+# validation humaine : l'exfiltration se produit au RENDU (l'affichage dans Slack),
+# pas au clic — un validateur qui refuse n'efface pas ce qui a déjà été affiché.
+# Ne JAMAIS retomber sur SLACK_WEBHOOK_URL ici, même en fallback.
+#
+# LIMITE ASSUMÉE : un canal privé dédié protège contre un attaquant EXTERNE (auteur
+# d'un ticket Jira qui n'est pas membre du canal). Il NE protège PAS contre un
+# attaquant INTERNE (participant du Daily, probablement déjà membre du canal de
+# revue) — contre l'insider, la seule défense structurelle est de limiter ce que
+# l'agent peut atteindre (voir app/java_classes.py, _is_indexable / least privilege
+# sur l'index) plutôt que de compter sur l'étanchéité du canal.
 SLACK_HITL_WEBHOOK = os.getenv("SLACK_HITL_WEBHOOK_URL", "")
-SLACK_BOT_TOKEN    = os.getenv("SLACK_BOT_TOKEN",        "")  # pour mise à jour du message
-SLACK_CHANNEL      = os.getenv("SLACK_CHANNEL",          "")  # requis avec SLACK_BOT_TOKEN, canal privé
+SLACK_BOT_TOKEN    = os.getenv("SLACK_BOT_TOKEN",        "")  # pour DM ciblé ou mise à jour du message
+SLACK_CHANNEL      = os.getenv("SLACK_CHANNEL",          "")  # n'a d'effet QU'avec SLACK_BOT_TOKEN
 JIRA_URL           = os.getenv("JIRA_BASE_URL",          "")
 JIRA_AUTH          = (os.getenv("JIRA_EMAIL", ""), os.getenv("JIRA_API_TOKEN", ""))
+
+# Fail loud plutôt que silencieux : SLACK_CHANNEL sans SLACK_BOT_TOKEN donne l'illusion
+# de contrôler la destination alors que la route webhook ignore ce champ (le canal réel
+# est celui figé à la création de l'Incoming Webhook dans Slack, pas dans ce code).
+if SLACK_CHANNEL and not SLACK_BOT_TOKEN:
+    raise RuntimeError(
+        "SLACK_CHANNEL est défini mais SLACK_BOT_TOKEN ne l'est pas — SLACK_CHANNEL n'a "
+        "AUCUN effet sans bot token (la route webhook l'ignore silencieusement, le canal "
+        "réel est celui configuré à la création de l'Incoming Webhook côté Slack). "
+        "Retirez SLACK_CHANNEL de .env, ou fournissez SLACK_BOT_TOKEN pour qu'il soit "
+        "réellement respecté."
+    )
 
 if not SLACK_HITL_WEBHOOK and not (SLACK_BOT_TOKEN and SLACK_CHANNEL):
     print("⚠️  Aucun canal Slack privé configuré pour la validation HITL "

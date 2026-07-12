@@ -2,7 +2,56 @@
 Golden dataset des classes Java indexées.
 Chaque classe est un Document LlamaIndex avec métadonnées structurées.
 """
+import re
+
 from llama_index.core import Document
+
+# ── Garde-fou least-privilege sur l'index ────────────────────────────────────────
+# Le canal Slack de validation (hitl_daily.py) protège contre un attaquant EXTERNE
+# (auteur d'un ticket Jira qui n'est pas dans le canal privé) — pas contre un attaquant
+# INTERNE (participant du Daily, probablement membre du canal de revue lui-même).
+# Contre l'insider, la seule défense structurelle est de réduire ce que l'agent peut
+# atteindre : même si l'injection réussit parfaitement (insider, canal lu, HITL
+# contourné), il ne doit rien y avoir de sensible à exfiltrer. L'agent ne peut pas
+# révéler ce qu'il n'a jamais vu.
+#
+# Whitelist plutôt que blacklist : seuls ces préfixes de package sont indexables. Tout
+# le reste (config, infra, credentials) est exclu par construction — y compris si une
+# future version remplace ce dataset statique par un scan dynamique d'un vrai repo.
+ALLOWED_PACKAGE_PREFIXES = ("com.legacy.",)
+
+# Défense en profondeur, complémentaire à la whitelist ci-dessus — exclut par nom même
+# dans un package autorisé (au cas où une classe de config finit mal rangée).
+_SENSITIVE_NAME_PATTERN = re.compile(
+    r"config|properties|credential|secret|password|token|apikey|datasource",
+    re.IGNORECASE,
+)
+
+# Détecte des chaînes qui ressemblent à une clé/URL de connexion/token dans le texte
+# libre (description, dépendances) — une classe par ailleurs légitime peut mentionner
+# accidentellement une valeur sensible copiée-collée dans un commentaire.
+_SECRET_LIKE_PATTERN = re.compile(
+    r"(jdbc:|mongodb://|postgres://|mysql://"
+    r"|\bAKIA[0-9A-Z]{16}\b|sk-[A-Za-z0-9]{20,}"
+    r"|[A-Za-z0-9+/]{32,}={0,2}\b)"
+)
+
+
+def _is_indexable(cls: dict) -> bool:
+    """True si cette classe peut entrer dans l'index vectoriel exposé à la recherche."""
+    package = cls.get("package", "")
+    if not any(package.startswith(p) for p in ALLOWED_PACKAGE_PREFIXES):
+        return False
+    if _SENSITIVE_NAME_PATTERN.search(cls.get("name", "")):
+        return False
+    haystack = " ".join([
+        cls.get("description", ""),
+        " ".join(cls.get("responsibilities", [])),
+        " ".join(cls.get("dependencies", [])),
+    ])
+    if _SENSITIVE_NAME_PATTERN.search(haystack) or _SECRET_LIKE_PATTERN.search(haystack):
+        return False
+    return True
 
 JAVA_CLASSES = [
     {
@@ -124,9 +173,17 @@ JAVA_CLASSES = [
 
 
 def build_documents() -> list[Document]:
-    """Convertit le golden dataset en Documents LlamaIndex."""
+    """
+    Convertit le golden dataset en Documents LlamaIndex — après filtrage least-privilege
+    (_is_indexable). N'importe quelle entrée qui ne passe pas la whitelist/blacklist est
+    exclue de l'index et donc de tout ce que l'agent peut jamais faire remonter dans
+    Slack ou Jira, quel que soit le prompt ou l'attaquant.
+    """
     docs = []
     for cls in JAVA_CLASSES:
+        if not _is_indexable(cls):
+            print(f"⚠️  Classe exclue de l'index (garde-fou least-privilege) : {cls.get('name', '?')}")
+            continue
         text = (
             f"Classe Java : {cls['name']}\n"
             f"Package : {cls['package']}\n"
