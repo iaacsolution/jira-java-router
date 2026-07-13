@@ -6,6 +6,9 @@ __pycache__/
 .venv/
 venv/
 
+# Compteur de boucle du hook Stop (.claude/hooks/gate.sh) -- etat local, pas du code
+.claude/.loop_count
+
 # Sorties generees par les runs (pas du code, pas la peine de versionner)
 daily_test*.txt
 daily.txt
