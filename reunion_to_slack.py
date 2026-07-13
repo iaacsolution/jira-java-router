@@ -41,35 +41,39 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 
 load_dotenv()
 
-SAMPLE_RATE  = 16000
-CHUNK        = 1024
-CHANNELS     = 1
-FORMAT       = pyaudio.paInt16
-OLLAMA_URL   = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+SAMPLE_RATE = 16000
+CHUNK = 1024
+CHANNELS = 1
+FORMAT = pyaudio.paInt16
+OLLAMA_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 
 # ── STATE ─────────────────────────────────────────────────────────────────────
 
+
 class State(TypedDict):
-    wav_path:       str    # chemin fichier audio
-    transcription:  str    # texte brut Whisper
-    daily_report:   str    # analyse Daily Scrum structurée (3 piliers)
-    blockers:       str    # bloqueurs extraits pour le Scrum Master
-    jira_mappings:  list   # [{blocker, ticket_key, ticket_summary, score, commented}]
-    summary:        str    # message Slack final
-    sent:           bool   # True si Slack reçu
+    wav_path: str  # chemin fichier audio
+    transcription: str  # texte brut Whisper
+    daily_report: str  # analyse Daily Scrum structurée (3 piliers)
+    blockers: str  # bloqueurs extraits pour le Scrum Master
+    jira_mappings: list  # [{blocker, ticket_key, ticket_summary, score, commented}]
+    summary: str  # message Slack final
+    sent: bool  # True si Slack reçu
 
 
 # ── NŒUDS ─────────────────────────────────────────────────────────────────────
+
 
 def transcribe_audio(state: State) -> dict:
     """Nœud 1 — Whisper : audio → texte brut horodaté."""
     print("\n[1/4] Transcription Whisper...")
 
-    model    = WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=8)
+    model = WhisperModel("small", device="cpu", compute_type="int8", cpu_threads=8)
     segments, info = model.transcribe(
-        state["wav_path"], language="fr",
-        beam_size=5, vad_filter=False,
+        state["wav_path"],
+        language="fr",
+        beam_size=5,
+        vad_filter=False,
     )
 
     lines = [seg.text.strip() for seg in segments]
@@ -126,17 +130,24 @@ Réponds uniquement avec le JSON, sans texte autour."""
 
         # Extrait le JSON de la réponse
         import re
-        match = re.search(r'\{.*\}', raw, re.DOTALL)
+
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
         if match:
             import json
+
             data = json.loads(match.group())
-            hier      = data.get("hier",        "Non mentionné")
-            auj       = data.get("aujourd_hui", "Non mentionné")
-            bloqueurs = data.get("bloqueurs",   "Aucun")
+            hier = data.get("hier", "Non mentionné")
+            auj = data.get("aujourd_hui", "Non mentionné")
+            bloqueurs = data.get("bloqueurs", "Aucun")
             # Qwen peut retourner une liste — on convertit en string
-            if isinstance(hier,      list): hier      = "\n".join(f"• {x}" for x in hier)
-            if isinstance(auj,       list): auj       = "\n".join(f"• {x}" for x in auj)
-            if isinstance(bloqueurs, list): bloqueurs = "\n".join(f"• {x}" for x in bloqueurs) if bloqueurs else "Aucun"
+            if isinstance(hier, list):
+                hier = "\n".join(f"• {x}" for x in hier)
+            if isinstance(auj, list):
+                auj = "\n".join(f"• {x}" for x in auj)
+            if isinstance(bloqueurs, list):
+                bloqueurs = (
+                    "\n".join(f"• {x}" for x in bloqueurs) if bloqueurs else "Aucun"
+                )
         else:
             hier, auj, bloqueurs = raw, "Non extrait", "Non extrait"
 
@@ -181,7 +192,8 @@ def _embed(text: str) -> list[float]:
 def _cosine(a: list[float], b: list[float]) -> float:
     """Similarité cosinus entre deux vecteurs."""
     import math
-    dot  = sum(x * y for x, y in zip(a, b))
+
+    dot = sum(x * y for x, y in zip(a, b))
     norm = math.sqrt(sum(x**2 for x in a)) * math.sqrt(sum(x**2 for x in b))
     return dot / norm if norm else 0.0
 
@@ -200,23 +212,28 @@ def map_blockers_to_jira(state: State) -> dict:
         print("  Aucun bloqueur — mapping ignoré")
         return {"jira_mappings": []}
 
-    jira_url   = os.getenv("JIRA_BASE_URL",  "")
-    jira_email = os.getenv("JIRA_EMAIL",     "")
+    jira_url = os.getenv("JIRA_BASE_URL", "")
+    jira_email = os.getenv("JIRA_EMAIL", "")
     jira_token = os.getenv("JIRA_API_TOKEN", "")
-    jira_proj  = os.getenv("JIRA_PROJECT",   "KAN")
-    auth       = (jira_email, jira_token)
+    jira_proj = os.getenv("JIRA_PROJECT", "KAN")
+    auth = (jira_email, jira_token)
 
     if not jira_url or not jira_email or not jira_token:
         print("  Jira non configuré — mapping simulé")
         return {"jira_mappings": []}
 
     # ── 1. Récupération des tickets Kanban ouverts ───────────────────────────
-    jql  = f'project = {jira_proj} AND status != Done ORDER BY created DESC'
+    jql = f"project = {jira_proj} AND status != Done ORDER BY created DESC"
     resp = requests.post(
         f"{jira_url}/rest/api/3/search/jql",
-        json={"jql": jql, "maxResults": 50, "fields": ["summary", "status", "description"]},
-        auth=auth, headers={"Content-Type": "application/json",
-                            "Accept": "application/json"}, timeout=15,
+        json={
+            "jql": jql,
+            "maxResults": 50,
+            "fields": ["summary", "status", "description"],
+        },
+        auth=auth,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        timeout=15,
     )
     if resp.status_code != 200:
         print(f"  Erreur Jira API {resp.status_code}")
@@ -231,23 +248,28 @@ def map_blockers_to_jira(state: State) -> dict:
     # ── 2. Vectorisation tickets avec nomic-embed-text ───────────────────────
     ticket_vectors = []
     for issue in issues:
-        summary     = issue["fields"]["summary"]
-        desc_raw    = issue["fields"].get("description") or {}
+        summary = issue["fields"]["summary"]
+        desc_raw = issue["fields"].get("description") or {}
         # Extrait le texte brut de l'ADF Jira (format JSON)
-        desc_text   = _extract_adf(desc_raw)[:300] if desc_raw else ""
+        desc_text = _extract_adf(desc_raw)[:300] if desc_raw else ""
         text_to_embed = f"{summary}. {desc_text}".strip()
         vec = _embed(text_to_embed)
-        ticket_vectors.append({
-            "key":     issue["key"],
-            "summary": summary,
-            "vector":  vec,
-        })
+        ticket_vectors.append(
+            {
+                "key": issue["key"],
+                "summary": summary,
+                "vector": vec,
+            }
+        )
     print(f"  {len(ticket_vectors)} tickets vectorisés")
 
     # ── 3. Vectorisation de chaque bloqueur + cosine similarity ──────────────
     # Un bloqueur peut être une ligne ou une phrase
-    blocker_lines = [b.strip() for b in blockers_text.replace("•", "\n").split("\n")
-                     if b.strip() and b.strip().lower() not in ["aucun", ""]]
+    blocker_lines = [
+        b.strip()
+        for b in blockers_text.replace("•", "\n").split("\n")
+        if b.strip() and b.strip().lower() not in ["aucun", ""]
+    ]
 
     mappings = []
     for blocker in blocker_lines:
@@ -256,8 +278,8 @@ def map_blockers_to_jira(state: State) -> dict:
             continue
 
         # Trouve le ticket le plus proche par cosine similarity
-        best     = max(ticket_vectors, key=lambda t: _cosine(blocker_vec, t["vector"]))
-        score    = _cosine(blocker_vec, best["vector"])
+        best = max(ticket_vectors, key=lambda t: _cosine(blocker_vec, t["vector"]))
+        score = _cosine(blocker_vec, best["vector"])
         print(f"  Bloqueur : «{blocker[:50]}»")
         print(f"    → {best['key']} ({score:.2%}) : {best['summary'][:60]}")
 
@@ -273,48 +295,72 @@ def map_blockers_to_jira(state: State) -> dict:
             # Signal explicite pour le validateur humain — sans ça, le HITL devient un
             # rubber-stamp au bout de quelques validations. Best-effort, pas un filtre fiable.
             scan_result = injection_scanner.scan(blocker)
-            alert_prefix = "⚠️ *Formulation suspecte détectée dans la transcription*\n" if scan_result.suspicious else ""
+            alert_prefix = (
+                "⚠️ *Formulation suspecte détectée dans la transcription*\n"
+                if scan_result.suspicious
+                else ""
+            )
 
             comment_body = {
-                "version": 1, "type": "doc",
+                "version": 1,
+                "type": "doc",
                 "content": [
-                    {"type": "paragraph", "content": [
-                        {"type": "text", "text": "🚨 Bloqueur confirmé en Daily Scrum",
-                         "marks": [{"type": "strong"}]}
-                    ]},
-                    {"type": "paragraph", "content": [{"type": "text", "text": blocker}]},
-                    {"type": "paragraph", "content": [
-                        {"type": "text", "text": "Validé manuellement via Slack — LangGraph HITL",
-                         "marks": [{"type": "em"}]}
-                    ]}
-                ]
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "🚨 Bloqueur confirmé en Daily Scrum",
+                                "marks": [{"type": "strong"}],
+                            }
+                        ],
+                    },
+                    {
+                        "type": "paragraph",
+                        "content": [{"type": "text", "text": blocker}],
+                    },
+                    {
+                        "type": "paragraph",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": "Validé manuellement via Slack — LangGraph HITL",
+                                "marks": [{"type": "em"}],
+                            }
+                        ],
+                    },
+                ],
             }
             try:
                 hitl_resp = requests.post(
                     f"{hitl_url}/hitl/trigger",
                     json={
-                        "ticket_key":    best["key"],
-                        "summary_text":  f"{alert_prefix}Bloqueur : {blocker}\nTicket : {best['summary']}",
-                        "comment_body":  comment_body,
+                        "ticket_key": best["key"],
+                        "summary_text": f"{alert_prefix}Bloqueur : {blocker}\nTicket : {best['summary']}",
+                        "comment_body": comment_body,
                     },
                     timeout=10,
                 )
                 if hitl_resp.status_code == 200:
                     thread_id = hitl_resp.json().get("thread_id", "")
-                    print(f"    → ✋ Validation Slack demandée (thread={thread_id[:8]}...)")
+                    print(
+                        f"    → ✋ Validation Slack demandée (thread={thread_id[:8]}...)"
+                    )
                     commented = True
                 else:
                     print(f"    → ❌ HITL erreur {hitl_resp.status_code}")
             except Exception as e:
                 print(f"    → ❌ HITL indisponible ({e}) — commentaire ignoré")
 
-        mappings.append({
-            "blocker":        blocker,
-            "ticket_key":     best["key"],
-            "ticket_summary": best["summary"],
-            "score":          round(score, 3),
-            "commented":      commented,
-        })
+        mappings.append(
+            {
+                "blocker": blocker,
+                "ticket_key": best["key"],
+                "ticket_summary": best["summary"],
+                "score": round(score, 3),
+                "commented": commented,
+            }
+        )
 
     return {"jira_mappings": mappings}
 
@@ -323,15 +369,19 @@ def build_summary(state: State) -> dict:
     """Nœud 4 — Formate le message Slack avec bloqueurs + tickets Jira mappés."""
     print("\n[4/5] Formatage Slack...")
 
-    has_blockers = (
-        state["blockers"].strip().lower() not in ["aucun", "none", "non mentionné", ""]
-    )
+    has_blockers = state["blockers"].strip().lower() not in [
+        "aucun",
+        "none",
+        "non mentionné",
+        "",
+    ]
 
     # Alerte visuelle si bloqueurs détectés
     blocker_alert = (
         f"\n\n:rotating_light: *ACTION SCRUM MASTER REQUISE*\n"
         f"Bloqueurs identifiés : {state['blockers']}"
-        if has_blockers else ""
+        if has_blockers
+        else ""
     )
 
     # Section tickets Jira mappés
@@ -371,9 +421,14 @@ def send_to_slack(state: State) -> dict:
 
     resp = requests.post(
         webhook_url,
-        json={"blocks": [{"type": "section", "text": {
-            "type": "mrkdwn", "text": state["summary"]
-        }}]},
+        json={
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": state["summary"]},
+                }
+            ]
+        },
         timeout=10,
     )
 
@@ -387,29 +442,36 @@ def send_to_slack(state: State) -> dict:
 
 # ── GRAPHE ────────────────────────────────────────────────────────────────────
 
+
 def build_graph():
     g = StateGraph(State)
-    g.add_node("transcribe",  transcribe_audio)
-    g.add_node("analyze",     analyze_daily)
+    g.add_node("transcribe", transcribe_audio)
+    g.add_node("analyze", analyze_daily)
     g.add_node("jira_mapper", map_blockers_to_jira)  # ← nœud vectoriel Jira
-    g.add_node("summarize",   build_summary)
-    g.add_node("slack",       send_to_slack)
+    g.add_node("summarize", build_summary)
+    g.add_node("slack", send_to_slack)
 
     g.set_entry_point("transcribe")
-    g.add_edge("transcribe",  "analyze")
-    g.add_edge("analyze",     "jira_mapper")     # bloqueurs → tickets Jira
+    g.add_edge("transcribe", "analyze")
+    g.add_edge("analyze", "jira_mapper")  # bloqueurs → tickets Jira
     g.add_edge("jira_mapper", "summarize")
-    g.add_edge("summarize",   "slack")
-    g.add_edge("slack",       END)
+    g.add_edge("summarize", "slack")
+    g.add_edge("slack", END)
     return g.compile()
 
 
 # ── ENREGISTREMENT ────────────────────────────────────────────────────────────
 
+
 def record_meeting() -> str:
     p, frames, stop = pyaudio.PyAudio(), [], threading.Event()
-    stream = p.open(format=FORMAT, channels=CHANNELS,
-                    rate=SAMPLE_RATE, input=True, frames_per_buffer=CHUNK)
+    stream = p.open(
+        format=FORMAT,
+        channels=CHANNELS,
+        rate=SAMPLE_RATE,
+        input=True,
+        frames_per_buffer=CHUNK,
+    )
     print("🎙️  Enregistrement en cours... (appuyez sur Entrée pour arrêter)")
 
     def read():
@@ -424,7 +486,9 @@ def record_meeting() -> str:
     input()
     stop.set()
     t.join(timeout=1)
-    stream.stop_stream(); stream.close(); p.terminate()
+    stream.stop_stream()
+    stream.close()
+    p.terminate()
 
     duration = len(frames) * CHUNK / SAMPLE_RATE
     print(f"⏹️  {duration:.1f}s enregistrées")
@@ -443,9 +507,12 @@ def record_meeting() -> str:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default=None, help="Fichier .txt de sortie")
-    parser.add_argument("--wav", default=None,
-                         help="Fichier .wav existant a utiliser au lieu du micro live "
-                              "(filet de securite demo, ex: test.mp3/test.wav)")
+    parser.add_argument(
+        "--wav",
+        default=None,
+        help="Fichier .wav existant a utiliser au lieu du micro live "
+        "(filet de securite demo, ex: test.mp3/test.wav)",
+    )
     args = parser.parse_args()
 
     if args.wav:
@@ -456,12 +523,18 @@ if __name__ == "__main__":
     else:
         wav = record_meeting()
 
-    app  = build_graph()
-    result = app.invoke({
-        "wav_path": wav, "transcription": "",
-        "daily_report": "", "blockers": "",
-        "jira_mappings": [], "summary": "", "sent": False
-    })
+    app = build_graph()
+    result = app.invoke(
+        {
+            "wav_path": wav,
+            "transcription": "",
+            "daily_report": "",
+            "blockers": "",
+            "jira_mappings": [],
+            "summary": "",
+            "sent": False,
+        }
+    )
 
     if args.output:
         Path(args.output).write_text(result["daily_report"], encoding="utf-8")

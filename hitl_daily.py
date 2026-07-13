@@ -53,10 +53,12 @@ load_dotenv()
 # l'agent peut atteindre (voir app/java_classes.py, _is_indexable / least privilege
 # sur l'index) plutôt que de compter sur l'étanchéité du canal.
 SLACK_HITL_WEBHOOK = os.getenv("SLACK_HITL_WEBHOOK_URL", "")
-SLACK_BOT_TOKEN    = os.getenv("SLACK_BOT_TOKEN",        "")  # pour DM ciblé ou mise à jour du message
-SLACK_CHANNEL      = os.getenv("SLACK_CHANNEL",          "")  # n'a d'effet QU'avec SLACK_BOT_TOKEN
-JIRA_URL           = os.getenv("JIRA_BASE_URL",          "")
-JIRA_AUTH          = (os.getenv("JIRA_EMAIL", ""), os.getenv("JIRA_API_TOKEN", ""))
+SLACK_BOT_TOKEN = os.getenv(
+    "SLACK_BOT_TOKEN", ""
+)  # pour DM ciblé ou mise à jour du message
+SLACK_CHANNEL = os.getenv("SLACK_CHANNEL", "")  # n'a d'effet QU'avec SLACK_BOT_TOKEN
+JIRA_URL = os.getenv("JIRA_BASE_URL", "")
+JIRA_AUTH = (os.getenv("JIRA_EMAIL", ""), os.getenv("JIRA_API_TOKEN", ""))
 
 # Fail loud plutôt que silencieux : SLACK_CHANNEL sans SLACK_BOT_TOKEN donne l'illusion
 # de contrôler la destination alors que la route webhook ignore ce champ (le canal réel
@@ -71,26 +73,30 @@ if SLACK_CHANNEL and not SLACK_BOT_TOKEN:
     )
 
 if not SLACK_HITL_WEBHOOK and not (SLACK_BOT_TOKEN and SLACK_CHANNEL):
-    print("⚠️  Aucun canal Slack privé configuré pour la validation HITL "
-          "(SLACK_HITL_WEBHOOK_URL, ou SLACK_BOT_TOKEN+SLACK_CHANNEL) — mode simulation "
-          "console uniquement. Ne configurez PAS SLACK_WEBHOOK_URL ici : ce canal est "
-          "potentiellement lisible par l'auteur du ticket/de l'audio.")
+    print(
+        "⚠️  Aucun canal Slack privé configuré pour la validation HITL "
+        "(SLACK_HITL_WEBHOOK_URL, ou SLACK_BOT_TOKEN+SLACK_CHANNEL) — mode simulation "
+        "console uniquement. Ne configurez PAS SLACK_WEBHOOK_URL ici : ce canal est "
+        "potentiellement lisible par l'auteur du ticket/de l'audio."
+    )
 
 
 # ── STATE ─────────────────────────────────────────────────────────────────────
 
+
 class State(TypedDict):
-    ticket_key:      str    # ex: KAN-15
-    summary_text:    str    # texte court affiche dans le message Slack (jamais poste tel
-                             # quel sur Jira sans validation humaine — c'est le but du HITL)
-    comment_body:    dict   # corps ADF complet a poster sur Jira SI l'humain confirme —
-                             # construit par l'appelant (reunion_to_slack.py, app/main.py),
-                             # jamais genere ici a partir de texte non fiable
-    human_decision:  str    # "confirm" | "cancel" — rempli après interrupt
-    jira_commented:  bool
+    ticket_key: str  # ex: KAN-15
+    summary_text: str  # texte court affiche dans le message Slack (jamais poste tel
+    # quel sur Jira sans validation humaine — c'est le but du HITL)
+    comment_body: dict  # corps ADF complet a poster sur Jira SI l'humain confirme —
+    # construit par l'appelant (reunion_to_slack.py, app/main.py),
+    # jamais genere ici a partir de texte non fiable
+    human_decision: str  # "confirm" | "cancel" — rempli après interrupt
+    jira_commented: bool
 
 
 # ── HELPERS ───────────────────────────────────────────────────────────────────
+
 
 def _send_approval_buttons(state: State, thread_id: str) -> None:
     """
@@ -103,7 +109,10 @@ def _send_approval_buttons(state: State, thread_id: str) -> None:
         "blocks": [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": "🚨 Validation requise — Daily Scrum"}
+                "text": {
+                    "type": "plain_text",
+                    "text": "🚨 Validation requise — Daily Scrum",
+                },
             },
             {
                 "type": "section",
@@ -111,9 +120,15 @@ def _send_approval_buttons(state: State, thread_id: str) -> None:
                 # ticket Jira (donnee non fiable) — Slack l'affiche tel quel, ne l'execute
                 # jamais. Le point de decision reste le clic humain, pas ce texte.
                 "fields": [
-                    {"type": "mrkdwn", "text": f"*À valider :*\n{state['summary_text']}"},
-                    {"type": "mrkdwn", "text": f"*Ticket Jira :*\n`{state['ticket_key']}`"},
-                ]
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*À valider :*\n{state['summary_text']}",
+                    },
+                    {
+                        "type": "mrkdwn",
+                        "text": f"*Ticket Jira :*\n`{state['ticket_key']}`",
+                    },
+                ],
             },
             {"type": "divider"},
             {
@@ -125,18 +140,18 @@ def _send_approval_buttons(state: State, thread_id: str) -> None:
                         "style": "primary",
                         "action_id": "confirm",
                         # thread_id encodé ici — Slack le renvoie dans le callback
-                        "value": thread_id
+                        "value": thread_id,
                     },
                     {
                         "type": "button",
                         "text": {"type": "plain_text", "text": "❌ Annuler"},
                         "style": "danger",
                         "action_id": "cancel",
-                        "value": thread_id
-                    }
-                ]
-            }
-        ]
+                        "value": thread_id,
+                    },
+                ],
+            },
+        ],
     }
 
     # Log du corps EXACT juste avant l'appel HTTP (jamais les headers/tokens) — vérifie ce qui
@@ -156,10 +171,14 @@ def _send_approval_buttons(state: State, thread_id: str) -> None:
             timeout=10,
         )
     elif SLACK_HITL_WEBHOOK:
-        requests.post(SLACK_HITL_WEBHOOK, json={"blocks": payload["blocks"]}, timeout=10)
+        requests.post(
+            SLACK_HITL_WEBHOOK, json={"blocks": payload["blocks"]}, timeout=10
+        )
     else:
-        print(f"[Slack simulation — AUCUN CANAL PRIVÉ CONFIGURÉ] thread_id={thread_id}\n"
-              f"  À valider : {state['summary_text']}")
+        print(
+            f"[Slack simulation — AUCUN CANAL PRIVÉ CONFIGURÉ] thread_id={thread_id}\n"
+            f"  À valider : {state['summary_text']}"
+        )
 
 
 def _post_jira_comment(ticket_key: str, body: dict) -> bool:
@@ -184,6 +203,7 @@ def _post_jira_comment(ticket_key: str, body: dict) -> bool:
 
 
 # ── NŒUDS LANGGRAPH ───────────────────────────────────────────────────────────
+
 
 def human_approval_node(state: State) -> dict:
     """
@@ -220,14 +240,14 @@ def route_after_human(state: State) -> str:
 
 # ── GRAPHE ────────────────────────────────────────────────────────────────────
 
-checkpointer = MemorySaver()   # persistance State entre interrupt et resume
+checkpointer = MemorySaver()  # persistance State entre interrupt et resume
 
 
 def build_graph():
     g = StateGraph(State)
 
     g.add_node("human_approval", human_approval_node)
-    g.add_node("post_comment",   post_jira_comment_node)
+    g.add_node("post_comment", post_jira_comment_node)
 
     g.set_entry_point("human_approval")
 
@@ -264,18 +284,20 @@ async def trigger_approval(request: Request):
     ce endpoint les traite uniquement comme donnees a afficher/poster, jamais comme des
     instructions a executer.
     """
-    data       = await request.json()
-    thread_id  = str(uuid.uuid4())   # identifiant unique du run LangGraph
+    data = await request.json()
+    thread_id = str(uuid.uuid4())  # identifiant unique du run LangGraph
 
     if "ticket_key" not in data or "comment_body" not in data:
-        return JSONResponse(status_code=400, content={"error": "ticket_key et comment_body requis"})
+        return JSONResponse(
+            status_code=400, content={"error": "ticket_key et comment_body requis"}
+        )
 
-    config     = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": thread_id}}
 
     state: State = {
-        "ticket_key":    data["ticket_key"],
-        "summary_text":  data.get("summary_text", ""),
-        "comment_body":  data["comment_body"],
+        "ticket_key": data["ticket_key"],
+        "summary_text": data.get("summary_text", ""),
+        "comment_body": data["comment_body"],
         "human_decision": "",
         "jira_commented": False,
     }
@@ -300,25 +322,27 @@ async def slack_callback(request: Request):
     Configurer dans : Slack App → Interactivity → Request URL → /slack/actions
     Slack envoie un form POST avec un champ 'payload' JSON.
     """
-    form      = await request.form()
-    payload   = json.loads(form["payload"])
+    form = await request.form()
+    payload = json.loads(form["payload"])
 
-    action    = payload["actions"][0]
-    action_id = action["action_id"]        # "confirm" ou "cancel"
-    thread_id = action["value"]            # ← thread_id récupéré du bouton Slack
+    action = payload["actions"][0]
+    action_id = action["action_id"]  # "confirm" ou "cancel"
+    thread_id = action["value"]  # ← thread_id récupéré du bouton Slack
 
-    user      = payload.get("user", {}).get("name", "inconnu")
+    user = payload.get("user", {}).get("name", "inconnu")
     print(f"[Slack] {user} → {action_id} | thread_id={thread_id}")
 
     # Reprend le graphe suspendu avec la décision humaine
     # Command(resume=valeur) est injecté comme retour de interrupt()
-    config   = {"configurable": {"thread_id": thread_id}}
+    config = {"configurable": {"thread_id": thread_id}}
     decision = "confirm" if action_id == "confirm" else "cancel"
 
     compiled_graph.invoke(Command(resume=decision), config=config)
 
     # Slack exige une réponse 200 dans les 3 secondes
-    msg = "✅ Commentaire Jira posté." if decision == "confirm" else "❌ Action annulée."
+    msg = (
+        "✅ Commentaire Jira posté." if decision == "confirm" else "❌ Action annulée."
+    )
     return JSONResponse(content={"text": msg})
 
 
